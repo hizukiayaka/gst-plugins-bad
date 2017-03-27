@@ -66,6 +66,7 @@ static const struct
   DEF_FMT (NV12, NV12),
   DEF_FMT (NV21, NV21),
   DEF_FMT (NV16, NV16),
+  DEF_FMT (NV12_10, NV12_10LE40),
 
 #undef DEF_FMT
 };
@@ -111,6 +112,9 @@ gst_drm_bpp_from_drm (guint32 drmfmt)
     case DRM_FORMAT_NV16:
       bpp = 8;
       break;
+    case DRM_FORMAT_NV12_10:
+      bpp = 10;
+      break;
     case DRM_FORMAT_UYVY:
     case DRM_FORMAT_YUYV:
     case DRM_FORMAT_YVYU:
@@ -139,6 +143,7 @@ gst_drm_height_from_drm (guint32 drmfmt, guint32 height)
     case DRM_FORMAT_YUV422:
     case DRM_FORMAT_NV12:
     case DRM_FORMAT_NV21:
+    case DRM_FORMAT_NV12_10:
       ret = height * 3 / 2;
       break;
     case DRM_FORMAT_NV16:
