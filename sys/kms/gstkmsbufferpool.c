@@ -69,11 +69,12 @@ gst_kms_buffer_pool_set_config (GstBufferPool * pool, GstStructure * config)
   GstVideoInfo vinfo;
   GstAllocator *allocator;
   GstAllocationParams params;
+  guint size = 0;
 
   vpool = GST_KMS_BUFFER_POOL_CAST (pool);
   priv = vpool->priv;
 
-  if (!gst_buffer_pool_config_get_params (config, &caps, NULL, NULL, NULL))
+  if (!gst_buffer_pool_config_get_params (config, &caps, &size, NULL, NULL))
     goto wrong_config;
 
   if (!caps)
@@ -95,6 +96,8 @@ gst_kms_buffer_pool_set_config (GstBufferPool * pool, GstStructure * config)
   if (!priv->allocator)
     goto no_allocator;
 
+  if (size > vinfo.size)
+    vinfo.size = size;
   priv->vinfo = vinfo;
 
   /* enable metadata based on config of the pool */
