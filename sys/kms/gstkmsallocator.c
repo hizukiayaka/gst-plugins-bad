@@ -151,6 +151,7 @@ extrapolate_stride (const GstVideoFormatInfo * finfo, gint plane, gint stride)
     case GST_VIDEO_FORMAT_NV16:
     case GST_VIDEO_FORMAT_NV61:
     case GST_VIDEO_FORMAT_NV24:
+    case GST_VIDEO_FORMAT_NV12_10LE40:
       estride = (plane == 0 ? 1 : 2) *
           GST_VIDEO_FORMAT_INFO_SCALE_WIDTH (finfo, plane, stride);
       break;
@@ -166,7 +167,7 @@ static gboolean
 gst_kms_allocator_memory_create (GstKMSAllocator * allocator,
     GstKMSMemory * kmsmem, GstVideoInfo * vinfo)
 {
-  gint i, ret, h;
+  gint i, ret, h, hh, height;
   struct drm_mode_create_dumb arg = { 0, };
   guint32 fmt;
   gint num_planes = GST_VIDEO_INFO_N_PLANES (vinfo);
@@ -185,8 +186,11 @@ gst_kms_allocator_memory_create (GstKMSAllocator * allocator,
   fmt = gst_drm_format_from_video (GST_VIDEO_INFO_FORMAT (vinfo));
   arg.bpp = gst_drm_bpp_from_drm (fmt);
   arg.width = GST_VIDEO_INFO_WIDTH (vinfo);
-  h = GST_VIDEO_INFO_HEIGHT (vinfo);
-  arg.height = gst_drm_height_from_drm (fmt, h);
+
+  h = gst_drm_height_from_drm (fmt, GST_VIDEO_INFO_HEIGHT (vinfo));
+  height = vinfo->size / arg.width;
+  hh = MAX (h, height);
+  arg.height = hh;
 
   ret = drmIoctl (allocator->priv->fd, DRM_IOCTL_MODE_CREATE_DUMB, &arg);
   if (ret)
@@ -196,7 +200,7 @@ gst_kms_allocator_memory_create (GstKMSAllocator * allocator,
     goto done;
 
   for (i = 0; i < num_planes; i++) {
-    guint32 pitch;
+    guint32 pitch, stride, offset;
 
     if (!arg.pitch)
       continue;
@@ -204,12 +208,19 @@ gst_kms_allocator_memory_create (GstKMSAllocator * allocator,
     /* Overwrite the video info's stride and offset using the pitch calculcated
      * by the kms driver. */
     pitch = extrapolate_stride (vinfo->finfo, i, arg.pitch);
-    GST_VIDEO_INFO_PLANE_STRIDE (vinfo, i) = pitch;
-    GST_VIDEO_INFO_PLANE_OFFSET (vinfo, i) = offs;
+    stride = GST_VIDEO_INFO_PLANE_STRIDE (vinfo, i);
+
+    GST_VIDEO_INFO_PLANE_STRIDE (vinfo, i) = MAX (stride, pitch);
+    if (GST_VIDEO_INFO_PLANE_OFFSET (vinfo, i) > offs)
+      offs = GST_VIDEO_INFO_PLANE_OFFSET (vinfo, i);
+    else
+      GST_VIDEO_INFO_PLANE_OFFSET (vinfo, i) = offs;
 
     /* Note that we cannot negotiate special padding betweem each planes,
      * hence using the display height here. */
-    offs += pitch * GST_VIDEO_FORMAT_INFO_SCALE_HEIGHT (vinfo->finfo, i, h);
+    offs +=
+        pitch * GST_VIDEO_FORMAT_INFO_SCALE_HEIGHT (vinfo->finfo, i,
+        GST_VIDEO_INFO_HEIGHT (vinfo));
 
     GST_DEBUG_OBJECT (allocator, "Created BO plane %i with stride %i and "
         "offset %" G_GSIZE_FORMAT, i,
@@ -218,7 +229,8 @@ gst_kms_allocator_memory_create (GstKMSAllocator * allocator,
   }
 
   /* Update with the size use for display, excluding any padding at the end */
-  GST_VIDEO_INFO_SIZE (vinfo) = offs;
+  if (GST_VIDEO_INFO_SIZE (vinfo) < offs)
+    GST_VIDEO_INFO_SIZE (vinfo) = offs;
 
 done:
   kmsmem->bo->handle = arg.handle;
