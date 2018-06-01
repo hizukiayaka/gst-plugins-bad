@@ -5,8 +5,7 @@ kmssink_sources = [
   'gstkmsutils.c',
 ]
 
-libdrm_dep = dependency('libdrm', version : '>= 2.4.55', required : false)
-
+libdrm_dep = dependency('libdrm', version : '>= 2.4.55', required : get_option('kms'))
 if libdrm_dep.found()
   gstkmssink = library('gstkms',
     kmssink_sources,
@@ -16,4 +15,5 @@ if libdrm_dep.found()
     install : true,
     install_dir : plugins_install_dir,
   )
+  pkgconfig.generate(gstkmssink, install_dir : plugins_pkgconfig_install_dir)
 endif

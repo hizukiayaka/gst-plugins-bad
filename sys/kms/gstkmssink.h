@@ -53,6 +53,9 @@ struct _GstKMSSink {
   gint crtc_id;
   gint plane_id;
   guint pipe;
+  GData *conn_props;
+  GData *crtc_props;
+  GHashTable *plane_res;
 
   /* crtc data */
   guint16 hdisplay, vdisplay;
@@ -60,24 +63,35 @@ struct _GstKMSSink {
 
   /* capabilities */
   gboolean has_prime_import;
+  gboolean has_prime_export;
   gboolean has_async_page_flip;
   gboolean can_scale;
 
   gboolean modesetting_enabled;
+  gboolean restore_crtc;
+  GstStructure *connector_props;
+  GstStructure *plane_props;
 
   GstVideoInfo vinfo;
   GstCaps *allowed_caps;
   GstBufferPool *pool;
   GstAllocator *allocator;
   GstBuffer *last_buffer;
-  GstMemory *tmp_kmsmem;
 
   gchar *devname;
+  gchar *bus_id;
 
   guint32 mm_width, mm_height;
-
+  gpointer saved_crtc;
   GstPoll *poll;
   GstPollFD pollfd;
+
+  /* render video rectangle */
+  GstVideoRectangle render_rect;
+
+  /* reconfigure info if driver doesn't scale */
+  GstVideoRectangle pending_rect;
+  gboolean reconfigure;
 };
 
 struct _GstKMSSinkClass {

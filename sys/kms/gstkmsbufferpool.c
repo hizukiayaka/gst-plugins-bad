@@ -37,10 +37,10 @@ GST_DEBUG_CATEGORY_STATIC (gst_kms_buffer_pool_debug);
 
 struct _GstKMSBufferPoolPrivate
 {
-  gint fd;
   GstVideoInfo vinfo;
   GstAllocator *allocator;
   gboolean add_videometa;
+  gboolean has_prime_export;
 };
 
 #define parent_class gst_kms_buffer_pool_parent_class
@@ -53,7 +53,9 @@ static const gchar **
 gst_kms_buffer_pool_get_options (GstBufferPool * pool)
 {
   static const gchar *options[] = { GST_BUFFER_POOL_OPTION_VIDEO_META,
-    GST_BUFFER_POOL_OPTION_KMS_BUFFER, NULL
+    GST_BUFFER_POOL_OPTION_KMS_BUFFER,
+    GST_BUFFER_POOL_OPTION_KMS_PRIME_EXPORT,
+    NULL
   };
   return options;
 }
@@ -67,11 +69,12 @@ gst_kms_buffer_pool_set_config (GstBufferPool * pool, GstStructure * config)
   GstVideoInfo vinfo;
   GstAllocator *allocator;
   GstAllocationParams params;
+  guint size = 0;
 
   vpool = GST_KMS_BUFFER_POOL_CAST (pool);
   priv = vpool->priv;
 
-  if (!gst_buffer_pool_config_get_params (config, &caps, NULL, NULL, NULL))
+  if (!gst_buffer_pool_config_get_params (config, &caps, &size, NULL, NULL))
     goto wrong_config;
 
   if (!caps)
@@ -88,17 +91,20 @@ gst_kms_buffer_pool_set_config (GstBufferPool * pool, GstStructure * config)
   if (allocator && GST_IS_KMS_ALLOCATOR (allocator)) {
     if (priv->allocator)
       gst_object_unref (priv->allocator);
-    if ((priv->allocator = allocator))
-      gst_object_ref (allocator);
+    priv->allocator = gst_object_ref (allocator);
   }
   if (!priv->allocator)
     goto no_allocator;
 
+  if (size > vinfo.size)
+    vinfo.size = size;
   priv->vinfo = vinfo;
 
   /* enable metadata based on config of the pool */
   priv->add_videometa = gst_buffer_pool_config_has_option (config,
       GST_BUFFER_POOL_OPTION_VIDEO_META);
+  priv->has_prime_export = gst_buffer_pool_config_has_option (config,
+      GST_BUFFER_POOL_OPTION_KMS_PRIME_EXPORT);
 
   return GST_BUFFER_POOL_CLASS (parent_class)->set_config (pool, config);
 
@@ -143,6 +149,16 @@ gst_kms_buffer_pool_alloc_buffer (GstBufferPool * pool, GstBuffer ** buffer,
   if (!mem)
     goto no_memory;
 
+  if (vpool->priv->has_prime_export) {
+    GstMemory *dmabufmem;
+
+    dmabufmem = gst_kms_allocator_dmabuf_export (priv->allocator, mem);
+    if (dmabufmem)
+      mem = dmabufmem;
+    else
+      GST_WARNING_OBJECT (pool, "Failed to export DMABuf from Dumb buffer.");
+  }
+
   *buffer = gst_buffer_new ();
   gst_buffer_append_memory (*buffer, mem);
 
@@ -184,7 +200,6 @@ static void
 gst_kms_buffer_pool_init (GstKMSBufferPool * pool)
 {
   pool->priv = gst_kms_buffer_pool_get_instance_private (pool);
-  pool->priv->fd = -1;
 }
 
 static void
@@ -206,5 +221,10 @@ gst_kms_buffer_pool_class_init (GstKMSBufferPoolClass * klass)
 GstBufferPool *
 gst_kms_buffer_pool_new (void)
 {
-  return g_object_new (GST_TYPE_KMS_BUFFER_POOL, NULL);
+  GstBufferPool *pool;
+
+  pool = g_object_new (GST_TYPE_KMS_BUFFER_POOL, NULL);
+  gst_object_ref_sink (pool);
+
+  return pool;
 }
