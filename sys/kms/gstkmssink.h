@@ -53,6 +53,9 @@ struct _GstKMSSink {
   gint crtc_id;
   gint plane_id;
   guint pipe;
+  GData *conn_props;
+  GData *crtc_props;
+  GHashTable *plane_res;
 
   /* crtc data */
   guint16 hdisplay, vdisplay;
@@ -74,7 +77,6 @@ struct _GstKMSSink {
   GstBufferPool *pool;
   GstAllocator *allocator;
   GstBuffer *last_buffer;
-  GstMemory *tmp_kmsmem;
 
   gchar *devname;
   gchar *bus_id;
