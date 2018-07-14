@@ -357,7 +357,7 @@ configure_mode_setting (GstKMSSink * self, GstVideoInfo * vinfo)
     goto framebuffer_failed;
 
   for (i = 0; i < conn->count_modes; i++) {
-    if (conn->modes[i].vdisplay == fb->height &&
+    if ((conn->modes[i].flags & DRM_MODE_FLAG_INTERLACE) &&
         conn->modes[i].hdisplay == fb->width) {
       mode = &conn->modes[i];
       break;
