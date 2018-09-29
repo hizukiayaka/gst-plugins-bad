@@ -831,45 +831,12 @@ event_failed:
   }
 }
 
-static gboolean
-set_drm_property (gint fd, guint32 object, guint32 object_type,
-    drmModeObjectPropertiesPtr properties, const gchar * prop_name,
-    guint64 value)
-{
-  guint i;
-  gboolean ret = FALSE;
-
-  for (i = 0; i < properties->count_props && !ret; i++) {
-    drmModePropertyPtr property;
-
-    property = drmModeGetProperty (fd, properties->props[i]);
-
-    /* GstStructure parser limits the set of supported character, so we
-     * replace the invalid characters with '-'. In DRM, this is generally
-     * replacing spaces into '-'. */
-    g_strcanon (property->name, G_CSET_a_2_z G_CSET_A_2_Z G_CSET_DIGITS "_",
-        '-');
-
-    GST_LOG ("found property %s (looking for %s)", property->name, prop_name);
-
-    if (!strcmp (property->name, prop_name)) {
-      drmModeObjectSetProperty (fd, object, object_type,
-          property->prop_id, value);
-      ret = TRUE;
-    }
-    drmModeFreeProperty (property);
-  }
-
-  return ret;
-}
-
 typedef struct
 {
   GstKMSSink *self;
-  drmModeObjectPropertiesPtr properties;
   guint obj_id;
   guint obj_type;
-  const gchar *obj_type_str;
+  drmModeAtomicReqPtr req;
 } SetPropsIter;
 
 static gboolean
@@ -879,6 +846,7 @@ set_obj_prop (GQuark field_id, const GValue * value, gpointer user_data)
   GstKMSSink *self = iter->self;
   const gchar *name;
   guint64 v;
+  gboolean ret = FALSE;
 
   name = g_quark_to_string (field_id);
 
@@ -896,16 +864,20 @@ set_obj_prop (GQuark field_id, const GValue * value, gpointer user_data)
     return TRUE;
   }
 
-  if (set_drm_property (self->fd, iter->obj_id, iter->obj_type,
-          iter->properties, name, v)) {
-    GST_DEBUG_OBJECT (self,
-        "Set %s property '%s' to %" G_GUINT64_FORMAT,
-        iter->obj_type_str, name, v);
-  } else {
-    GST_WARNING_OBJECT (self,
-        "Failed to set %s property '%s' to %" G_GUINT64_FORMAT,
-        iter->obj_type_str, name, v);
+  switch (iter->obj_type) {
+    case DRM_MODE_OBJECT_CONNECTOR:
+      add_connection_property (self, iter->req, name, v);
+      break;
+    case DRM_MODE_OBJECT_PLANE:
+      add_plane_property (self, iter->req, self->plane_id, name, v);
+      break;
   }
+
+  if (ret)
+    GST_DEBUG_OBJECT (self, "Set property '%s' to %" G_GUINT64_FORMAT, name, v);
+  else
+    GST_WARNING_OBJECT (self,
+        "Failed to set property '%s' to %" G_GUINT64_FORMAT, name, v);
 
   return TRUE;
 }
@@ -913,18 +885,12 @@ set_obj_prop (GQuark field_id, const GValue * value, gpointer user_data)
 static void
 gst_kms_sink_update_properties (SetPropsIter * iter, GstStructure * props)
 {
-  GstKMSSink *self = iter->self;
-
-  iter->properties = drmModeObjectGetProperties (self->fd, iter->obj_id,
-      iter->obj_type);
-
   gst_structure_foreach (props, set_obj_prop, iter);
-
-  drmModeFreeObjectProperties (iter->properties);
 }
 
 static void
-gst_kms_sink_update_connector_properties (GstKMSSink * self)
+gst_kms_sink_update_connector_properties (GstKMSSink * self,
+    drmModeAtomicReq * req)
 {
   SetPropsIter iter;
 
@@ -932,15 +898,16 @@ gst_kms_sink_update_connector_properties (GstKMSSink * self)
     return;
 
   iter.self = self;
+  iter.req = req;
   iter.obj_id = self->conn_id;
   iter.obj_type = DRM_MODE_OBJECT_CONNECTOR;
-  iter.obj_type_str = "connector";
 
   gst_kms_sink_update_properties (&iter, self->connector_props);
 }
 
 static void
-gst_kms_sink_update_plane_properties (GstKMSSink * self)
+gst_kms_sink_update_plane_properties (GstKMSSink * self, gint plane_id,
+    drmModeAtomicReq * req)
 {
   SetPropsIter iter;
 
@@ -948,9 +915,9 @@ gst_kms_sink_update_plane_properties (GstKMSSink * self)
     return;
 
   iter.self = self;
-  iter.obj_id = self->plane_id;
+  iter.req = req;
+  iter.obj_id = plane_id;
   iter.obj_type = DRM_MODE_OBJECT_PLANE;
-  iter.obj_type_str = "plane";
 
   gst_kms_sink_update_properties (&iter, self->plane_props);
 }
@@ -1062,9 +1029,6 @@ gst_kms_sink_start (GstBaseSink * bsink)
 
   g_object_notify_by_pspec (G_OBJECT (self), g_properties[PROP_DISPLAY_WIDTH]);
   g_object_notify_by_pspec (G_OBJECT (self), g_properties[PROP_DISPLAY_HEIGHT]);
-
-  gst_kms_sink_update_connector_properties (self);
-  gst_kms_sink_update_plane_properties (self);
 
   ret = TRUE;
 
@@ -1911,6 +1875,9 @@ gst_kms_sink_show_frame (GstVideoSink * vsink, GstBuffer * buf)
   add_plane_property (self, req, self->plane_id, "CRTC_W", result.w);
   add_plane_property (self, req, self->plane_id, "CRTC_H", result.h);
   /* TODO: add support for drm_color_encoding and drm_color_range */
+
+  gst_kms_sink_update_connector_properties (self, req);
+  gst_kms_sink_update_plane_properties (self, self->plane_id, req);
 
   if (self->has_async_page_flip)
     flags |= DRM_MODE_PAGE_FLIP_EVENT | DRM_MODE_ATOMIC_NONBLOCK;
